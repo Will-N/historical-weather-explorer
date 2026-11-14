@@ -1,0 +1,63 @@
+name: Publish Historical Weather Explorer
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Build static site with Mapbox public token
+        env:
+          MAPBOX_PUBLIC_TOKEN: ${{ secrets.MAPBOX_PUBLIC_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          token = os.getenv("MAPBOX_PUBLIC_TOKEN", "")
+          if not token.startswith("pk."):
+              raise SystemExit("Missing MAPBOX_PUBLIC_TOKEN repository secret (public pk. token).")
+
+          html = Path("index.html").read_text(encoding="utf-8")
+          placeholder = "'YOUR_MAPBOX_PUBLIC_TOKEN_HERE'"
+          if placeholder not in html:
+              raise SystemExit("Mapbox token placeholder not found in index.html.")
+
+          destination = Path("_site")
+          destination.mkdir(exist_ok=True)
+          (destination / "index.html").write_text(
+              html.replace(placeholder, json.dumps(token)), encoding="utf-8"
+          )
+          (destination / ".nojekyll").touch()
+          PY
+
+      - name: Upload site artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
