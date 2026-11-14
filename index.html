@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Historical Weather Explorer</title>
+<script src="https://api.mapbox.com/mapbox-gl-js/v2.3.1/mapbox-gl.js"></script>
+<link href="https://api.mapbox.com/mapbox-gl-js/v2.3.1/mapbox-gl.css" rel="stylesheet">
+<style>
+:root{color-scheme:light;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#1b2b33}*{box-sizing:border-box}body{margin:0}.layout{display:flex;min-height:100vh}#map{width:50%;min-height:100vh}.sidebar{width:50%;padding:24px;background:#fff;overflow-y:auto}h1{margin:0 0 8px;font-size:1.55rem}.hint{margin:0 0 20px;color:#596872;line-height:1.45}.dates{display:flex;gap:12px;flex-wrap:wrap}.field{display:flex;flex:1 1 180px;flex-direction:column;gap:6px}label{font-size:.88rem;font-weight:650}input{font:inherit;padding:9px 10px;border:1px solid #b7c4cd;border-radius:6px;width:100%}.coords{display:flex;flex-wrap:wrap;gap:16px;margin:18px 0 14px}.coords span{font-variant-numeric:tabular-nums}button{font:inherit;padding:10px 18px;background:#175c81;color:#fff;border:none;border-radius:6px;cursor:pointer}button:hover{background:#104664}button:disabled{background:#8298a5;cursor:wait}#status{min-height:1.25rem;margin:14px 0;color:#52616c;font-size:.9rem}#status.error{color:#a42222}.table-wrap{width:100%;overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:.9rem;min-width:530px}th,td{padding:9px 8px;border-bottom:1px solid #d9e1e6;text-align:right;white-space:nowrap}th:first-child,td:first-child{text-align:left}th{background:#eef4f7;position:sticky;top:0}tbody tr:hover{background:#f7fafc}@media(max-width:800px){.layout{display:block}#map{width:100%;min-height:45vh;height:45vh}.sidebar{width:100%;padding:20px 16px}}
+</style>
+</head>
+<body>
+<main class="layout">
+<div id="map" aria-label="Map for selecting a weather location"></div>
+<section class="sidebar">
+<h1>Historical Weather Explorer</h1>
+<p class="hint">Click a location on the map, choose a date range, and retrieve daily weather observations.</p>
+<div class="dates"><div class="field"><label for="startDate">Start date</label><input type="date" id="startDate" min="2010-01-01" required></div><div class="field"><label for="endDate">End date</label><input type="date" id="endDate" min="2010-01-01" required></div></div>
+<div class="coords"><div>Latitude: <strong><span id="lat">—</span></strong></div><div>Longitude: <strong><span id="lon">—</span></strong></div></div>
+<button id="submitWeather" type="button">Get weather data</button>
+<p id="status" role="status" aria-live="polite">Select a point on the map to begin.</p>
+<div id="dataDisplay" class="table-wrap"></div>
+</section>
+</main>
+<script>
+const MAPBOX_PUBLIC_TOKEN = 'YOUR_MAPBOX_PUBLIC_TOKEN_HERE';
+const WEATHER_API = 'https://weather-bnorthcott1967.pythonanywhere.com/data';
+const latitudeEl=document.getElementById('lat'),longitudeEl=document.getElementById('lon'),startEl=document.getElementById('startDate'),endEl=document.getElementById('endDate'),statusEl=document.getElementById('status'),buttonEl=document.getElementById('submitWeather'),displayEl=document.getElementById('dataDisplay');
+let selectedLocation=null,marker=null;
+function localYMD(date){return [date.getFullYear(),String(date.getMonth()+1).padStart(2,'0'),String(date.getDate()).padStart(2,'0')].join('-')}
+const latestDate=new Date();latestDate.setDate(latestDate.getDate()-2);startEl.max=endEl.max=localYMD(latestDate);endEl.value=localYMD(latestDate);const defaultStart=new Date(latestDate);defaultStart.setDate(defaultStart.getDate()-29);startEl.value=localYMD(defaultStart);
+function setStatus(message,isError=false){statusEl.textContent=message;statusEl.classList.toggle('error',isError)}
+function formatDateForApi(ymd){const [year,month,day]=ymd.split('-');return month+'/'+day+'/'+year}
+function formatApiDate(value){if(value===null||value===undefined||value==='')return '—';let date;if(typeof value==='number'||/^\d{10,13}$/.test(String(value))){const n=Number(value);date=new Date(n<100000000000?n*1000:n)}else{date=new Date(value)}return Number.isNaN(date.getTime())?String(value):date.toLocaleDateString('en-US',{timeZone:'UTC',month:'2-digit',day:'2-digit',year:'numeric'})}
+function displayData(payload){
+displayEl.replaceChildren();
+const rows=Array.isArray(payload)?payload:(Array.isArray(payload?.data)?payload.data:null);
+if(!rows)throw new Error(payload?.error||payload?.message||'Unexpected API response format.');
+if(rows.length===0){setStatus('The API returned no observations for this location and date range.');return}
+const headings=['Date','Max Temperature (F)','Min Temperature (F)','Rainfall (in)','PET (in)'];
+const keys=['Date','Max Temp','Min Temp','Rainfall','PET'];
+const table=document.createElement('table'),header=table.createTHead().insertRow();
+headings.forEach(title=>{const th=document.createElement('th');th.textContent=title;header.appendChild(th)});
+const tbody=table.createTBody();
+rows.forEach(item=>{const tr=tbody.insertRow();keys.forEach(key=>{const td=tr.insertCell();const value=item?.[key];td.textContent=key==='Date'?formatApiDate(value):(value??'—')})});
+displayEl.appendChild(table);setStatus('Loaded '+rows.length.toLocaleString()+' daily weather records.');
+}
+async function getWeatherData(){
+if(!selectedLocation){setStatus('Click a location on the map first.',true);return}
+if(!startEl.value||!endEl.value){setStatus('Choose both a start date and an end date.',true);return}
+if(startEl.value>endEl.value){setStatus('The start date must not be later than the end date.',true);return}
+if(endEl.value>endEl.max||startEl.value<startEl.min){setStatus('The selected dates are outside the available input range.',true);return}
+const params=new URLSearchParams({start_date:formatDateForApi(startEl.value),end_date:formatDateForApi(endEl.value),latitude:String(selectedLocation.latitude),longitude:String(selectedLocation.longitude),format:'json'});
+buttonEl.disabled=true;displayEl.replaceChildren();setStatus('Retrieving observations from PythonAnywhere…');
+try{const response=await fetch(WEATHER_API+'?'+params.toString(),{method:'GET'});if(!response.ok)throw new Error('Weather API returned HTTP '+response.status+'.');displayData(await response.json())}
+catch(err){console.error('Weather request failed:',err);setStatus('Unable to load weather data: '+err.message+'. If blocked by the browser, allow https://will-n.github.io in PythonAnywhere CORS.',true)}
+finally{buttonEl.disabled=false}
+}
+buttonEl.addEventListener('click',getWeatherData);
+if(!MAPBOX_PUBLIC_TOKEN.startsWith('pk.')){
+setStatus('Mapbox public token is not configured. Set MAPBOX_PUBLIC_TOKEN in index.html.',true);
+}else{
+try{mapboxgl.accessToken=MAPBOX_PUBLIC_TOKEN;const map=new mapboxgl.Map({container:'map',style:'mapbox://styles/mapbox/satellite-v9',center:[-88.06,40.74],zoom:3});map.addControl(new mapboxgl.NavigationControl());map.on('click',event=>{const latitude=Number(event.lngLat.lat.toFixed(6)),longitude=Number(event.lngLat.lng.toFixed(6));selectedLocation={latitude,longitude};latitudeEl.textContent=latitude.toFixed(6);longitudeEl.textContent=longitude.toFixed(6);if(marker)marker.remove();marker=new mapboxgl.Marker().setLngLat([longitude,latitude]).addTo(map);setStatus('Location selected. Choose your dates and request weather data.')})}catch(err){setStatus('Map initialization failed: '+err.message,true)}
+}
+</script>
+</body>
+</html>
