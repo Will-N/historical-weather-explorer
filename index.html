@@ -33,18 +33,49 @@ const latestDate=new Date();latestDate.setDate(latestDate.getDate()-2);startEl.m
 function setStatus(message,isError=false){statusEl.textContent=message;statusEl.classList.toggle('error',isError)}
 function formatDateForApi(ymd){const [year,month,day]=ymd.split('-');return month+'/'+day+'/'+year}
 function formatApiDate(value){if(value===null||value===undefined||value==='')return '—';let date;if(typeof value==='number'||/^\d{10,13}$/.test(String(value))){const n=Number(value);date=new Date(n<100000000000?n*1000:n)}else{date=new Date(value)}return Number.isNaN(date.getTime())?String(value):date.toLocaleDateString('en-US',{timeZone:'UTC',month:'2-digit',day:'2-digit',year:'numeric'})}
+// Accept both the original weather API's JSON keys and newer DataFrame-style keys.
+const WEATHER_COLUMNS=[
+ {title:'Date',keys:['Date','date','timestamp'],isDate:true},
+ {title:'Max Temperature (F)',keys:['Max Temp','max_temperature','max_temp','maxTemperature','tmax']},
+ {title:'Min Temperature (F)',keys:['Min Temp','min_temperature','min_temp','minTemperature','tmin']},
+ {title:'Rainfall (in)',keys:['Rainfall','rainfall','precipitation','precip']},
+ {title:'PET (in)',keys:['PET','pet','potential_evapotranspiration']}
+];
+function weatherValue(item,keys){
+ if(!item || typeof item!=='object')return undefined;
+ for(const key of keys)if(Object.prototype.hasOwnProperty.call(item,key)&&item[key]!==null&&item[key]!==undefined)return item[key];
+ // Also recognize capitalization, spaces, and underscores in other API versions.
+ const normalizedKeys=keys.map(k=>k.toLowerCase().replace(/[^a-z0-9]/g,''));
+ for(const key of Object.keys(item)){
+  if(normalizedKeys.includes(key.toLowerCase().replace(/[^a-z0-9]/g,'')))return item[key];
+ }
+ return undefined;
+}
 function displayData(payload){
-displayEl.replaceChildren();
-const rows=Array.isArray(payload)?payload:(Array.isArray(payload?.data)?payload.data:null);
-if(!rows)throw new Error(payload?.error||payload?.message||'Unexpected API response format.');
-if(rows.length===0){setStatus('The API returned no observations for this location and date range.');return}
-const headings=['Date','Max Temperature (F)','Min Temperature (F)','Rainfall (in)','PET (in)'];
-const keys=['Date','Max Temp','Min Temp','Rainfall','PET'];
-const table=document.createElement('table'),header=table.createTHead().insertRow();
-headings.forEach(title=>{const th=document.createElement('th');th.textContent=title;header.appendChild(th)});
-const tbody=table.createTBody();
-rows.forEach(item=>{const tr=tbody.insertRow();keys.forEach(key=>{const td=tr.insertCell();const value=item?.[key];td.textContent=key==='Date'?formatApiDate(value):(value??'—')})});
-displayEl.appendChild(table);setStatus('Loaded '+rows.length.toLocaleString()+' daily weather records.');
+ displayEl.replaceChildren();
+ const rows=Array.isArray(payload)?payload:(Array.isArray(payload?.data)?payload.data:null);
+ if(!rows)throw new Error(payload?.error||payload?.message||'Unexpected API response format.');
+ if(rows.length===0){setStatus('The API returned no observations for this location and date range.');return}
+ const table=document.createElement('table'),header=table.createTHead().insertRow();
+ WEATHER_COLUMNS.forEach(column=>{const th=document.createElement('th');th.textContent=column.title;header.appendChild(th)});
+ const tbody=table.createTBody();
+ let populatedValues=0;
+ rows.forEach(item=>{
+  const tr=tbody.insertRow();
+  WEATHER_COLUMNS.forEach(column=>{
+   const td=tr.insertCell();
+   const value=weatherValue(item,column.keys);
+   if(!column.isDate && value!==null && value!==undefined && value!=='')populatedValues++;
+   td.textContent=column.isDate?formatApiDate(value):(value===null||value===undefined||value===''?'—':String(value));
+  });
+ });
+ displayEl.appendChild(table);
+ if(populatedValues===0){
+  const availableKeys=Object.keys(rows[0]||{}).join(', ')||'(none)';
+  setStatus('Received '+rows.length+' dated records but no weather values. API fields: '+availableKeys+'.',true);
+ }else{
+  setStatus('Loaded '+rows.length.toLocaleString()+' daily weather records.');
+ }
 }
 async function getWeatherData(){
 if(!selectedLocation){setStatus('Click a location on the map first.',true);return}
